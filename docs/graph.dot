@@ -1,0 +1,32 @@
+digraph {
+        add1 -> BUFI1 -> BUFI2 -> BUFI3_valid_0 -> FORK -> add1
+        FORK -> JOIN [label="replicate thrice"]
+
+        BUF11_valid -> JOIN -> MERGE
+
+        BUF55 -> MERGE -> BUF2 -> loop_cond -> BDEMUX -> {BUF5, FORK9}
+
+
+        BUF5 -> mulstep6 -> BUF7 -> mulstep54 -> BUF55
+
+        FORK9 -> BUF10 -> BUF11_valid
+
+        loop_cond [label="(x != 0, x)"]
+
+        FORK9 -> out
+
+        BUF2 [shape=box]
+        BUF5 [shape=box]
+        BUF55 [shape=box]
+        BUF7 [shape=box]
+        BUFI1 [shape=box]
+        BUFI2 [shape=box]
+        BUFI3_valid_0  [shape=box]
+        BUF10  [shape=box]
+        BUF11_valid [shape=box]
+
+        BDEMUX [shape=diamond]
+        FORK [shape=diamond]
+        FORK9 [shape=diamond]
+
+}

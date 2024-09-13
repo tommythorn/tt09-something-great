@@ -1,11 +1,13 @@
 /*
- * Copyright (c) 2024 Your Name
+ * Copyright (c) 2024 Tommy Thorn
  * SPDX-License-Identifier: Apache-2.0
  */
 
 `default_nettype none
 
-module tt_um_example (
+`include "tokenflow.h"
+
+module tt_um_tommythorn_maxbw (
     input  wire [7:0] ui_in,    // Dedicated inputs
     output wire [7:0] uo_out,   // Dedicated outputs
     input  wire [7:0] uio_in,   // IOs: Input path
@@ -16,12 +18,56 @@ module tt_um_example (
     input  wire       rst_n     // reset_n - low to reset
 );
 
-  // All output pins must be assigned. If not used, assign to 0.
-  assign uo_out  = ui_in + uio_in;  // Example: ou_out is the sum of ui_in and uio_in
-  assign uio_out = 0;
-  assign uio_oe  = 0;
+   parameter          w = 26; // All I can fit in a single tile
+   wire               reset = !rst_n;
+   wire               `chan ou_ch;
 
-  // List all unused inputs to prevent warnings
-  wire _unused = &{ena, clk, rst_n, 1'b0};
+   tokenflow #(w) tokenflow_inst(reset, ou_ch);
 
+   wire [14:0]        result15 = (ou_ch`data >> 15) ^ ou_ch`data;
+
+   assign uio_oe = ~0;
+   assign {uio_out, uo_out} = {result15, ou_ch`req};
+   assign ou_ch`ack = ui_in[0];
+
+   // List all unused inputs to prevent warnings
+   wire _unused = &{ena, clk, rst_n, 1'b0, ui_in, uio_in };
 endmodule
+
+`ifdef mySIM
+module tb;
+   reg clk, rst_n;
+   wire [14:0] data;
+   wire        req;
+   wire [7:0]  ui_in;
+
+   tt_um_tommythorn_maxbw
+     insn(.clk(clk), .rst_n(rst_n),
+          .ui_in(ui_in), .uio_out(data[14:7]), .uo_out({data[6:0],req}));
+
+   // Tie ACK to REQ for a continous stream of 0, 2, 6, 12, 20, ..., x*(x+1)
+   assign ui_in[0] = req & rst_n;
+
+   always @(posedge req)
+     $display("Got %d", data);
+
+   always #5 clk = !clk;
+   initial begin
+      $dumpfile("tokenflow.vcd");
+      $dumpvars;
+      $monitor(">> %05d  R%d A%d %1d", $time, req, ui_in[0], data);
+
+      clk = 1;
+      rst_n = 0;
+
+      $display("Starting Sim");
+
+      #20
+        rst_n = 1;
+
+      $display("Out of Reset");
+
+      #4100 $finish;
+   end
+endmodule
+`endif
