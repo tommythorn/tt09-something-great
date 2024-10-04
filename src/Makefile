@@ -1,5 +1,5 @@
 test:
-	iverilog -DSIM -DmySIM -o project project.v tokenflow.v
+	iverilog -DSIM -DmySIM -o project tokenflow.v
 	./project
 
 lint:

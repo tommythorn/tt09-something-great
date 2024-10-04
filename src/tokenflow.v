@@ -1,49 +1,32 @@
+/*
+ * NCL Async Multiplier -- Tommy Thorn 20240913
+ *
+ * This is intended to be an NCL version on tt08-maxbw for a
+ * comparison.
+ *
+ * Note, NCL encodes the REQ in the data itself and that can
+ * be done in many ways.  By default I assume all data is
+ * dual-rail encoded, but 1-of-N might be better in some cases.
+ * 
+ * For convenience, the n-bit value DATA(v) is dual rail encoded as
+ * {v,~v} (and NULL of course being just {0,0}.
+ */
+
 /* verilator lint_off LATCH */
 `default_nettype none
 
 `include "tokenflow.h"
 
-/* This is a sad and wasteful way to slow down a signal */
-`ifdef SIM
-
-module min_delay(input wire x, output reg y);
-   always @* y = #1 x;
-endmodule
-
-`else
-
-module min_delay(input wire x, output wire y);
-   // XXX need to characterize this
-   (* keep *)sky130_fd_sc_hd__dlygate4sd1_1 d0(.X(y), .A(x));
-endmodule
-
-`endif
-
-/* verilator lint_off UNOPTFLAT */
-module comp_delay#(parameter delay = 10)
-   (input wire reset, input x, output wire y);
-
-   (* keep *) wire [delay:0] inv_chain;
-   assign inv_chain[0] = !reset & x;
-
-   genvar i;
-   generate
-      for (i = 0; i < delay; i = i + 1)
-        (* keep *) min_delay min_delay_inst(inv_chain[i], inv_chain[i + 1]);
-   endgenerate
-   assign y = inv_chain[delay] & x;
-endmodule
-
 // Muller C element
 `ifdef SIM
 
 module cgate#(parameter init = 1'd0)
-   (input wire reset, input wire a, input wire b, output reg q);
+   (input wire reset, input wire a, input wire b, output reg q = init);
    always @*
      if (reset)
        q = init;
      else if (a == b)
-       q = #1 b;
+       q = #3 b;
 endmodule
 
 `else
@@ -70,281 +53,135 @@ endmodule
 module comp_const#(parameter w = 32,
                    parameter k = 42)
    (input reset, inout wire `chan channel);
-   comp_delay #(3) inst(reset, !channel`ack, channel`req);
-   assign channel`data = k;
+
+   assign channel`data = channel`ack ? 0 : {k,~k};
 endmodule
 
 module comp_sink#(parameter w = 32,
                   parameter id = "??")
    (input reset, inout wire `chan channel);
 
-   comp_delay #(5) inst(reset, channel`req, channel`ack);
+   wire [w-1:0] merged = channel`data0 | channel`data1;
+   
+
+   cgate cg(reset, |merged, &merged, channel`ack);
 
 `ifdef SIM
    always @(posedge channel`ack)
-     if (!reset) $display("%05d  %-6s: Sunk %1d", $time, id, channel`data);
+     if (!reset)
+       $display("%05d  %-6s: Sunk %1d (ACK %d)", $time, id, channel`data1, channel`ack);
 `endif
-endmodule
-
-`ifdef SIM
-module check#(parameter id = "??",
-              parameter w = 32)
-   (inout `chan x);
-
-   reg `chan prev = 0;
-
-   /*
-    * Handshake transition checking.  The normal expect sequence:
-    * 00 - idle
-    * 10 - request (R)
-    * 11 - acknowledged request (AR)
-    * 01 - trailing acknowledged (A)
-    * 00 - idle
-    *
-    * Anything else is normally an illegal transition
-    *
-    *
-    * [TBD: for simulation we may allow instant consumers
-    * (idle <-> RA) and/or instant producers (R <-> A)]
-    *
-    * Furthermore, data must be held stable while a the receiver is acknowledging (sampling) it
-    */
-   always @* if (x != prev) begin
-      if (x`ctl != prev`ctl)
-        case (prev`ctl)
-          0: if (x`ctl == 3)      $display("%05d  %-6s: Violation!!  Idle 00 -> RA Sim only!", $time, id);
-             else if (x`ctl != 2) $display("%05d  %-6s: Violation!!  Idle 00 -> %02b", $time, id, x`ctl);
-          2: if (x`ctl != 3)      $display("%05d  %-6s: Violation!!  R    10 -> %02b", $time, id, x`ctl);
-          3: if (x`ctl == 0)      $display("%05d  %-6s: Violation!!  RA   11 -> Idle 00 Sim only!", $time, id);
-             else if (x`ctl != 1) $display("%05d  %-6s: Violation!!  RA   11 -> %02b", $time, id, x`ctl);
-          1: if (x`ctl != 0)      $display("%05d  %-6s: Violation!!   A   01 -> %02b", $time, id, x`ctl);
-        endcase
-
-      if (x`ack && prev`data != x`data)
-        $display("%05d  %-6s: Violation!!  %02b -> %02b and data %1d -> %1d", $time, id,
-                 prev`ctl, x`ctl,
-                 prev`data, x`data);
-      prev = x;
-   end
 endmodule
 
 module comp_spy#(parameter id = "??",
                  parameter w = 32)
    (inout `chan x);
 
-   check#(id, w) chk(x);
-
    reg `chan prev = 0;
+   wire	complete = &(x`data0 | x`data1);
+   wire [1:0] ctl = {complete, x`ack};
+
    always @* if (x != prev) begin
      $display("%05d  %-6s: %s %1d", $time, id,
-              x`ctl == 0 ? "  " :
-              x`ctl == 2 ? "R " :
-              x`ctl == 3 ? "RA" :
+              ctl == 0 ? "  " :
+              ctl == 2 ? "R " :
+              ctl == 3 ? "RA" :
               /*     == 1*/ " A",
-              x`data);
+              x`data1);
       prev = x;
    end
 endmodule
 
-module comp_spy3#(parameter id = "??",
-                  parameter w = 32)
-   (inout `chan3 x);
-
-   check#(.id(id), .w(3*w)) chk(x);
-
-   reg `chan prev = 0;
-
-   always @* if (x != prev) begin
-     $display("%05d  %-6s: %s %1d %1d %1d", $time, id,
-              x`ctl == 0 ? "  " :
-              x`ctl == 2 ? "R " :
-              x`ctl == 3 ? "RA" :
-              /*     == 1*/ " A",
-              x`data2, x`data1, x`data);
-      prev = x;
-   end
-endmodule
-
-module comp_spy0#(parameter id = "??")
-   (inout `ctl x);
-
-   wire dummy = 0;
-
-   check#(id, 1) chk({dummy, x}); // Verilog doesn't handle empty ranges
-
-   reg `ctl prev = 0;
-
-   always @* if (x != prev) begin
-     $display("%05d  %-6s: %s", $time, id,
-              x`ctl == 0 ? "  " :
-              x`ctl == 2 ? "R " :
-              x`ctl == 3 ? "RA" :
-              /*     == 1*/ " A");
-      prev = x;
-   end
-endmodule
-`endif
-
-module comp_elem#(parameter w = 100,
-                  parameter valid = 1'd0,
-                  parameter data = 0,
-                  parameter delay = 2)
+module comp_elem#(parameter w = 1)
    (input reset,
     inout `chan x,
     inout `chan y);
 
-   (* keep *) reg [w-1:0] ydata;
-
-   // Being explicit here to try to flesh out a yosys complaint about
-   // conflicting drivers for x`ack
-
-   wire   x_ack;
-
-   cgate#(valid) cg_elem(reset, !y`ack, x`req, x_ack);
-
-   assign x`ack = x_ack;
-
-   wire   delayed_yreq;
-   comp_delay #(delay) d0_elem(reset, x_ack, delayed_yreq);
-
-   assign y`req = delayed_yreq & x_ack;
-   assign y`data = ydata;
-
-   always @* if (reset)
-     ydata = data;
-   else if (x_ack)
-     ydata = x`data;
-endmodule
-
-// Stupid Verilog
-module comp_elem0#(parameter valid = 1'd0,
-                   parameter delay = 1)
-   (input reset,
-    inout `ctl x,
-    inout `ctl y);
-
-   wire delayed_yreq;
-
-   cgate#(valid) cg(reset, !y`ack, x`req, x`ack);
-   comp_delay #(delay) d0(reset, x`ack, delayed_yreq);
-   assign y`req = delayed_yreq & x`ack;
+   genvar i;
+   generate
+      for (i = 0; i < 2*w; i = i + 1)
+	 cgate inst(reset, x[i+1], !y`ack, y[i+1]);
+   endgenerate
+   cgate cg(reset, |(y`data0 | y`data1), &(y`data0 | y`data1), y`ack);
 endmodule
 
 module comp_elemV#(parameter w = 1,
-                  parameter data = 0,
-                  parameter delay = 1)
+                   parameter data = 0)
    (input reset,
     inout `chan x,
     inout `chan y);
 
-   comp_elem #(.valid(1'd1), .w(w), .data(data), .delay(delay)) i (reset, x, y);
-endmodule
+   // Verilog sucks and I can't do
+   // cgate#(init = ((~data >> i) & 1)) inst0(reset, x[i+1], !y`ack, y[i+1]);
+   // but instead have to inverse the cgate
+   wire	[w-1:0] k = data;
 
-module comp_elemV0#(parameter delay = 1)
-   (input reset,
-    inout `ctl x,
-    inout `ctl y);
-
-   comp_elem0 #(.valid(1'd1), .delay(delay)) i (reset, x, y);
+   genvar i;
+   generate
+      wire t;      
+      for (i = 0; i < w; i = i + 1) begin
+	 cgate inst0(reset, k[i] ^ x[i+1], k[i] ^ !y`ack, t);
+	 assign y[i+1] = k[i] ^ t;
+      end
+      for (i = 0; i < w; i = i + 1)
+	 cgate inst1(reset, x[w+i+1], !y`ack, y[w+i+1]);
+   endgenerate
+   cgate cg(reset, |(y`data0 | y`data1), &(y`data0 | y`data1), y`ack);
 endmodule
 
 module comp_fork#(parameter w = 32)
    (input reset,
     inout `chan x,
     inout `chan y, inout `chan z);
-   assign y`data = x`data;
-   assign z`data = x`data;
-   assign y`req = x`req;
-   assign z`req = x`req;
-   cgate c(reset, y`ack, z`ack, x`ack);
-endmodule
-
-// we need comp_fork0 because Verilog is stupid and can't handle emptiness
-module comp_fork0#(parameter w = 32)
-   (input reset,
-    inout `chan x,
-    inout `chan y, inout `ctl z);
-   assign y`data = x`data;
-   assign y`req = x`req;
-   assign z`req = x`req;
-   cgate c(reset, y`ack, z`ack, x`ack);
+   assign y`data0 = x`data0;
+   assign z`data0 = x`data0;
+   assign y`data1 = x`data1;
+   assign z`data1 = x`data1;
+   cgate cg(reset, y`ack, z`ack, x`ack);
 endmodule
 
 module comp_join#(parameter w = 32, parameter wy = 32)
    (input reset,
-    inout `chan x, inout [wy+1:0] y,
-    inout [wy+w+1:0] z);
+    inout `chan x, inout `chan y,
+    inout [4*w:0] z);
    assign x`ack = z`ack;
    assign y`ack = z`ack;
-   assign z[wy+w+1:2] = {y[wy+1:0], x`data};
-   cgate c(reset, x`req, y`req, z`req);
+   assign z`data0 = x`data0;
+   assign z`data1 = x`data1;
+   assign z[4*w:2*w+1] = {x`data0, x`data0};
 endmodule
 
-// See fork0 for why we need join0
-module comp_join0#(parameter w = 32)
-   (input reset,
-    inout `chan x, inout `ctl y,
-    inout `chan z);
-   assign x`ack = z`ack;
-   assign y`ack = z`ack;
-   assign z`data = x`data;
-   cgate c(reset, x`req, y`req, z`req);
-endmodule
-
-// XXX Merge is trick.  As best I can tell, the book verion is wrong
-// as the mux being guided directly by x`req (or conversely y`req)
-// means that data can change as soon as the input request is dropped
-// while the consumer is still sampling (z`ack).
-//
-// The fix seems to be a driving the mux from a C gate of x`req,
-// !y`req.  However this leads to a small race/gitch as the C gate is
-// slower than the OR gate driving z`req.
-
-// Also?:
-//   If the mux (z`data) is slower than the request
-// (z`req) + acknowledgement (z`ack) then the receiver can latch the
-// wrong data.  We thus have to delay the request by an amount that
-// exceeds the data delay
 module comp_merge#(parameter w = 32)
    (input reset,
     inout `chan x, inout `chan y,
     inout `chan z);
 
-   wire xactive;
-   cgate cg1(reset, x`req, !y`req, xactive);
-   cgate cg2(reset, z`ack, x`req, x`ack);
-   cgate cg3(reset, z`ack, y`req, y`ack);
-// assign z`req = x`req | y`req; // RACY
-   assign z`req = xactive ? x`req : y`req;
-
-// assign z`data = x`req ? x`data : y`data; // GLITCHY!
-   assign z`data = xactive ? x`data : y`data;
-
-`ifdef SIM
-   always @*
-     if (x`req & !x`ack & y`req & !y`ack)
-       $display("%05d  merge on two active channels!! %d vs %d", $time,
-                x`ctl, y`ctl);
-`endif
-/*
-   always @*
-     if (z`req)
-       $display("%05d  merge on %1d %1d", $time, x, y);
-*/
+   genvar i;
+   generate
+      for (i = 0; i < 2*w; i = i + 1)
+	cgate inst(reset, x[i+1], y[i+1], z[i+1]);
+   endgenerate
+   cgate cgy(reset, |(y`data0 | y`data1), &(y`data0 | y`data1), y`ack);
+   cgate cgx(reset, |(x`data0 | x`data1), &(x`data0 | x`data1), x`ack);
 endmodule
 
 module comp_mux#(parameter w = 32)
    (input reset,
     inout [2:0] ctl, inout `chan x, inout `chan y,
     inout `chan z);
-   wire xreq_gated, yreq_gated;
-   cgate cg0(reset, x`req, ctl`req & !ctl[2], xreq_gated);
-   cgate cg1(reset, y`req, ctl`req & ctl[2], yreq_gated);
-   cgate cg2(reset, z`ack, xreq_gated, x`ack);
-   cgate cg3(reset, z`ack, yreq_gated, y`ack);
-   assign z`req = xreq_gated | yreq_gated;
-   assign z`data = ctl[2] ? y`data : x`data;
-   assign ctl`ack = z`ack;
+
+   wire `chan gatedx, gatedy;
+
+   genvar i;
+   generate
+      for (i = 0; i < 2*w; i = i + 1) begin
+	 cgate instx(reset, ctl[2] /* ctl.f */, x[i+1], gatedx[i+1]);
+	 cgate insty(reset, ctl[1] /* ctl.t */, y[i+1], gatedy[i+1]);
+	 assign z[i] = gatedx[i] | gatedy[i];
+      end
+   endgenerate
+   cgate cgy(reset, |(y`data0 | y`data1), &(y`data0 | y`data1), y`ack);
+   cgate cgx(reset, |(x`data0 | x`data1), &(x`data0 | x`data1), x`ack);
 endmodule
 
 module comp_demux#(parameter w = 32)
@@ -355,91 +192,126 @@ module comp_demux#(parameter w = 32)
    assign x`ack = y`ack | z`ack;
    assign ctl`ack = x`ack;
 
-   cgate cg0(reset, x`req, ctl`req & !ctl[2], y`req);
-   cgate cg1(reset, x`req, ctl`req & ctl[2], z`req);
-
-   assign y`data = x`data;
-   assign z`data = x`data;
+   genvar i;
+   generate
+      for (i = 0; i < 2*w; i = i + 1) begin
+	 cgate insty(reset, ctl[2] /* ctl.f */, x[i+1], y[i+1]);
+	 cgate instz(reset, ctl[1] /* ctl.t */, x[i+1], z[i+1]);
+      end
+   endgenerate
 endmodule
 
-// comp_bdebug is like demux except the control comes bundled with
-// data and doesn't have its own handshake (this is cheaper)
-module comp_bdemux#(parameter w = 32)
-   (input _reset,
-    inout [w+2:0] ctlx,
-    inout `chan y, inout `chan z);
+module ncl_fa
+  (input [1:0] a,
+   input [1:0] b,
+   input [1:0] c,
+   output [1:0] s,
+   output [1:0] d);
 
-   assign ctlx`ack = y`ack | z`ack;
+   /* XXX This is extremely unoptimized at this point, should at least
+      use gen/kill */
 
-   assign y`req = ctlx`req & !ctlx[w+2];
-   assign z`req = ctlx`req &  ctlx[w+2];
-   assign y`data = ctlx`data;
-   assign z`data = ctlx`data;
+   wire [7:0]	x;
+   genvar i;
+   generate
+      for (i = 0; i < 8; i = i + 1) begin
+	 wire t;
+	 cgate cg1(1'd0, a[i & 1], b[i/2 & 1], t);
+	 cgate cg2(1'd0, t, c[i/4 & 1], x[i]);
+      end
+   endgenerate
+
+   assign s[1] = |(x &  8'b10010110);  // The four cases that gives a 1
+   assign s[0] = |(x & ~8'b10010110);
+   assign d[1] = |(x &  8'b11101000);  // The four cases that gives a carry-out
+   assign d[0] = |(x & ~8'b11101000);
 endmodule
 
-module comp_add1#(parameter w = 32)
-   (input _reset,
-    inout `chan x,
-    inout `chan y);
 
-   assign x`ack = y`ack;
-   assign y`req = x`req;
-   assign y`data = x`data + 1;
-endmodule
-
-module comp_isnonzero#(parameter w = 32)
-   (input _reset,
-    inout `chan x,
-    inout [2:0] y);
-
-   assign x`ack = y`ack;
-   assign y`req = x`req;
-   assign y[2]  = x`data != 0;
-endmodule
-
-module comp_bundled_isnz#(parameter w = 32)
+// XXX Ok, this works now, but is crazy slow: the forward propagation
+// is expected, but the NULL wave is equally slow.  This could be
+// fixed of course with input latches like in comp_elem.  The price of
+// timing insensitity is really crazy.
+module comp_add#(parameter w = 32)
    (input _reset,
     inout `chan x,
-    inout [w+2:0] y);
+    inout `chan y,
+    inout `chan z);
 
-   assign x`ack = y`ack;
-   assign y`req = x`req;
-   assign y[w+2:2]  = {x`data != 0,x`data};
-endmodule
+   // This will look like a join + computation
+   assign x`ack = z`ack;
+   assign y`ack = z`ack;
+   
+   wire	[w:0] carry0, carry1;
+   assign carry0[0] = !z`ack; // No carry-in
+   assign carry1[0] = 1'd 0;
 
-// Multiplication step (XXX doesn't take advantage of skipping add)
-//
-// if (b&1) == 1:
-//   c += a
-// a *= 2
-// b /= 2
-module mulstep#(parameter w = 32)
-   (input _reset,
-    inout `chan3 abc,
-    inout `chan3 new_abc);
-   wire [w-1:0] a = abc`data2;
-   wire [w-1:0] b = abc`data1;
-   wire [w-1:0] c = abc`data;
-   wire [w-1:0] new_c = c + ((b & 1) == 1 ? a : 0);
-   assign abc`ack = new_abc`ack;
-   assign new_abc[3*w+1:2] = {a << 1, b >> 1, new_c};
-   assign new_abc`req = abc`req;
+   /* XXX This is very unoptimized at this point */
+   genvar i;
+   generate
+      for (i = 1; i < w+1; i = i + 1) begin
+	 ncl_fa fa({carry1[i-1],carry0[i-1]}, {x[w+i],x[i]}, {y[w+i], y[i]},
+		   {z[w+i],z[i]}, {carry1[i],carry0[i]});
+      end
+   endgenerate
 endmodule
 
 
-module loop_cond#(parameter w = 32)
-   (input _reset,
-    inout `chan3 abc,
-    inout [3*w+2:0] tabc);
-   wire [w-1:0] a = abc`data2;
-   wire [w-1:0] b = abc`data1;
-   wire [w-1:0] c = abc`data;
-   wire         t = b != 0;
-   assign abc`ack = tabc`ack;
-   assign tabc[3*w+2:2] = {t, a, b, c};
-   assign tabc`req = abc`req;
+module tb;
+   parameter w = 32;
+   reg	     reset = 1;
+   
+   wire `chan k42;
+   wire	`chan k666;
+   wire	`chan c1, c2;
+
+   comp_const#(.w(32)) ik42 (reset, k42);
+   comp_const#(.w(32), .k(666)) ik666 (reset, k666);
+   comp_add#(.w(32)) iadd(reset, k42, k666, c1);
+   //comp_elem#(.w(32)) ielem(reset, c1, c2);
+   comp_sink#(.w(32))  isink(reset, c1);
+
+   initial begin
+      $dumpfile("tokenflow.vcd");
+      $dumpvars();
+
+      #20 reset = 0;
+
+      #1000 $finish;
+   end
 endmodule
 
+`ifdef testing_ncl_fa
+module tb;
+   wire [1:0] a, b, c;
+   wire [1:0] s, d;
+
+   ncl_fa fa(a, b, c, s, d);
+
+   reg [3:0]  x = 0;
+
+   assign a = x[0] ? {x[1], !x[1]} : 0;
+   assign b = x[0] ? {x[2], !x[2]} : 0;
+   assign c = x[0] ? {x[3], !x[3]} : 0;
+
+   always @*
+     if (0 != a && 0 != b && 0 != c && 0 != s && 0 != d)
+       $display(" >> %d + %d + %d = %d", a[1], b[1], c[1], {d[1],s[1]});
+
+   always #10 x <= x + 1;
+   
+   initial begin
+      $dumpfile("tokenflow.vcd");
+      $dumpvars();
+      $monitor("%05d  %d: %d %d %d -> %d %d", $time, x, a, b, c, s, d);
+
+      #700
+      $finish;
+   end
+endmodule
+`endif
+
+`ifdef some_future
 
 module tokenflow#(parameter w = 16)
    (input reset, inout wire `chan ou_ch);
@@ -573,3 +445,4 @@ module tokenflow#(parameter w = 16)
    comp_elem0                           i10(reset, c10ctl, c11ctl);
    comp_elemV0                          i11(reset, c11ctl, c12ctl);
 endmodule
+`endif
