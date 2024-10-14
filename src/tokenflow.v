@@ -270,21 +270,20 @@ module comp_add#(parameter w = 32)
    endgenerate
 endmodule
 
-
 module tb;
    parameter w = 32;
    reg       reset = 1;
 
    wire `chan k42;
-   wire `chan k666;
-   wire `chan c1, c2, c3;
+   wire `chan c0, c1, c2, c3, c4, c5;
 
-   comp_const#(.w(32), .k(42))          ik42(reset, k42);
-   comp_const#(.w(32), .k(666))         ik666 (reset, k666);
-   comp_add#(.w(32))                    i2(reset, k42, k666, c1);
-   comp_elem#(.w(32))                   i3(reset, c1, c2);
-   comp_elemV#(.w(32), .data(555))      i4(reset, c2, c3);
-   comp_sink#(.w(32), .id("c3"))        isink(reset, c3);
+   comp_const#(.w(w), .k(42))          ik42(reset, k42);
+   comp_elem#(.w(w))                   i2(reset, c0, c1);
+   comp_add#(.w(w))                    i3(reset, k42, c1, c2);
+   comp_elem#(.w(w))                   i4(reset, c2, c3);
+   comp_elemV#(.w(w), .data(555))      i5(reset, c3, c4);
+   comp_fork#(.w(w))                   i6(reset, c4, c5, c0);
+   comp_sink#(.w(w), .id("c5"))        isink(reset, c5);
 
 
    initial begin
