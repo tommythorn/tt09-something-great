@@ -102,7 +102,7 @@ module comp_elem#(parameter w = 1)
       for (i = 0; i < 2*w; i = i + 1)
 	 cgate inst(reset, x[i+1], !y`ack, y[i+1]);
    endgenerate
-   cgate cg(reset, |(y`data0 | y`data1), &(y`data0 | y`data1), y`ack);
+   cgate cg(reset, |(y`data0 | y`data1), &(y`data0 | y`data1), x`ack);
 endmodule
 
 module comp_elemV#(parameter w = 1,
