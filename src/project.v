@@ -42,7 +42,7 @@ module tb;
    wire [7:0]  ui_in;
 
    tt_um_tommythorn_maxbw
-     insn(.clk(clk), .rst_n(rst_n),
+     inst(.clk(clk), .rst_n(rst_n),
           .ui_in(ui_in), .uio_out(data[14:7]), .uo_out({data[6:0],req}));
 
    // Tie ACK to REQ for a continous stream of 0, 2, 6, 12, 20, ..., x*(x+1)
@@ -53,6 +53,7 @@ module tb;
 
    always #5 clk = !clk;
    initial begin
+      $display("tb log starting");
       $dumpfile("tokenflow.vcd");
       $dumpvars;
       $monitor(">> %05d  R%d A%d %1d", $time, req, ui_in[0], data);

@@ -51,7 +51,7 @@ endmodule
 `endif
 
 module comp_const#(parameter w = 32,
-                   parameter k = 42)
+                   parameter k = 0)
    (input reset, inout wire `chan channel);
 
    assign channel`data = channel`ack ? 0 : {k,~k};
@@ -90,6 +90,15 @@ module comp_spy#(parameter id = "??",
               x`data1);
       prev = x;
    end
+endmodule
+
+module comp_wire#(parameter w = 1)
+   (input reset,
+    inout `chan x,
+    inout `chan y);
+
+   assign y[2*w:1] = x[2*w:1];
+   assign x[0] = y[0];
 endmodule
 
 module comp_elem#(parameter w = 1)
@@ -265,13 +274,14 @@ module tb;
    wire	`chan k666;
    wire	`chan c1, c2;
 
-   comp_const#(.w(32)) ik42 (reset, k42);
+   comp_const#(.w(32), .k(42)) ik42 (reset, k42);
    comp_const#(.w(32), .k(666)) ik666 (reset, k666);
    comp_add#(.w(32)) iadd(reset, k42, k666, c1);
-   //comp_elem#(.w(32)) ielem(reset, c1, c2);
-   comp_sink#(.w(32))  isink(reset, c1);
+   comp_elem#(.w(32)) ielem(reset, c1, c2);
+   comp_sink#(.w(32), .id("c2"))  isink(reset, c2);
 
    initial begin
+      $display("tb test starting");
       $dumpfile("tokenflow.vcd");
       $dumpvars();
 
@@ -301,11 +311,12 @@ module tb;
    always #10 x <= x + 1;
    
    initial begin
+      $display$("tokenflow test starting");
       $dumpfile("tokenflow.vcd");
       $dumpvars();
       $monitor("%05d  %d: %d %d %d -> %d %d", $time, x, a, b, c, s, d);
 
-      #700
+      #1000
       $finish;
    end
 endmodule
