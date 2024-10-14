@@ -7,7 +7,7 @@
  * Note, NCL encodes the REQ in the data itself and that can
  * be done in many ways.  By default I assume all data is
  * dual-rail encoded, but 1-of-N might be better in some cases.
- * 
+ *
  * For convenience, the n-bit value DATA(v) is dual rail encoded as
  * {v,~v} (and NULL of course being just {0,0}.
  */
@@ -62,7 +62,7 @@ module comp_sink#(parameter w = 32,
    (input reset, inout wire `chan channel);
 
    wire [w-1:0] merged = channel`data0 | channel`data1;
-   
+
 
    cgate cg(reset, |merged, &merged, channel`ack);
 
@@ -78,7 +78,7 @@ module comp_spy#(parameter id = "??",
    (inout `chan x);
 
    reg `chan prev = 0;
-   wire	complete = &(x`data0 | x`data1);
+   wire complete = &(x`data0 | x`data1);
    wire [1:0] ctl = {complete, x`ack};
 
    always @* if (x != prev) begin
@@ -109,7 +109,7 @@ module comp_elem#(parameter w = 1)
    genvar i;
    generate
       for (i = 0; i < 2*w; i = i + 1)
-	 cgate inst(reset, x[i+1], !y`ack, y[i+1]);
+         cgate inst(reset, x[i+1], !y`ack, y[i+1]);
    endgenerate
    cgate cg(reset, |(y`data0 | y`data1), &(y`data0 | y`data1), x`ack);
 endmodule
@@ -123,19 +123,24 @@ module comp_elemV#(parameter w = 1,
    // Verilog sucks and I can't do
    // cgate#(init = ((~data >> i) & 1)) inst0(reset, x[i+1], !y`ack, y[i+1]);
    // but instead have to inverse the cgate
-   wire	[w-1:0] k = data;
+   wire [w-1:0] k = data;
 
+   // XXX I think there must exist a better way to do this
    genvar i;
    generate
-      wire t;      
       for (i = 0; i < w; i = i + 1) begin
-	 cgate inst0(reset, k[i] ^ x[i+1], k[i] ^ !y`ack, t);
-	 assign y[i+1] = k[i] ^ t;
+         wire t;
+         cgate inst0(reset, !k[i] ^ x[i+1], !k[i] ^ !y`ack, t);
+         assign y[i+1] = !k[i] ^ t;
       end
-      for (i = 0; i < w; i = i + 1)
-	 cgate inst1(reset, x[w+i+1], !y`ack, y[w+i+1]);
+
+      for (i = 0; i < w; i = i + 1) begin
+         wire tt;
+         cgate inst1(reset, k[i] ^ x[w+i+1], k[i] ^ !y`ack, tt);
+         assign y[w+i+1] = k[i] ^ tt;
+      end
    endgenerate
-   cgate cg(reset, |(y`data0 | y`data1), &(y`data0 | y`data1), y`ack);
+   cgate cg(reset, |(y`data0 | y`data1), &(y`data0 | y`data1), x`ack);
 endmodule
 
 module comp_fork#(parameter w = 32)
@@ -168,7 +173,7 @@ module comp_merge#(parameter w = 32)
    genvar i;
    generate
       for (i = 0; i < 2*w; i = i + 1)
-	cgate inst(reset, x[i+1], y[i+1], z[i+1]);
+        cgate inst(reset, x[i+1], y[i+1], z[i+1]);
    endgenerate
    cgate cgy(reset, |(y`data0 | y`data1), &(y`data0 | y`data1), y`ack);
    cgate cgx(reset, |(x`data0 | x`data1), &(x`data0 | x`data1), x`ack);
@@ -184,9 +189,9 @@ module comp_mux#(parameter w = 32)
    genvar i;
    generate
       for (i = 0; i < 2*w; i = i + 1) begin
-	 cgate instx(reset, ctl[2] /* ctl.f */, x[i+1], gatedx[i+1]);
-	 cgate insty(reset, ctl[1] /* ctl.t */, y[i+1], gatedy[i+1]);
-	 assign z[i] = gatedx[i] | gatedy[i];
+         cgate instx(reset, ctl[2] /* ctl.f */, x[i+1], gatedx[i+1]);
+         cgate insty(reset, ctl[1] /* ctl.t */, y[i+1], gatedy[i+1]);
+         assign z[i] = gatedx[i] | gatedy[i];
       end
    endgenerate
    cgate cgy(reset, |(y`data0 | y`data1), &(y`data0 | y`data1), y`ack);
@@ -204,8 +209,8 @@ module comp_demux#(parameter w = 32)
    genvar i;
    generate
       for (i = 0; i < 2*w; i = i + 1) begin
-	 cgate insty(reset, ctl[2] /* ctl.f */, x[i+1], y[i+1]);
-	 cgate instz(reset, ctl[1] /* ctl.t */, x[i+1], z[i+1]);
+         cgate insty(reset, ctl[2] /* ctl.f */, x[i+1], y[i+1]);
+         cgate instz(reset, ctl[1] /* ctl.t */, x[i+1], z[i+1]);
       end
    endgenerate
 endmodule
@@ -220,13 +225,13 @@ module ncl_fa
    /* XXX This is extremely unoptimized at this point, should at least
       use gen/kill */
 
-   wire [7:0]	x;
+   wire [7:0]   x;
    genvar i;
    generate
       for (i = 0; i < 8; i = i + 1) begin
-	 wire t;
-	 cgate cg1(1'd0, a[i & 1], b[i/2 & 1], t);
-	 cgate cg2(1'd0, t, c[i/4 & 1], x[i]);
+         wire t;
+         cgate cg1(1'd0, a[i & 1], b[i/2 & 1], t);
+         cgate cg2(1'd0, t, c[i/4 & 1], x[i]);
       end
    endgenerate
 
@@ -250,8 +255,8 @@ module comp_add#(parameter w = 32)
    // This will look like a join + computation
    assign x`ack = z`ack;
    assign y`ack = z`ack;
-   
-   wire	[w:0] carry0, carry1;
+
+   wire [w:0] carry0, carry1;
    assign carry0[0] = !z`ack; // No carry-in
    assign carry1[0] = 1'd 0;
 
@@ -259,8 +264,8 @@ module comp_add#(parameter w = 32)
    genvar i;
    generate
       for (i = 1; i < w+1; i = i + 1) begin
-	 ncl_fa fa({carry1[i-1],carry0[i-1]}, {x[w+i],x[i]}, {y[w+i], y[i]},
-		   {z[w+i],z[i]}, {carry1[i],carry0[i]});
+         ncl_fa fa({carry1[i-1],carry0[i-1]}, {x[w+i],x[i]}, {y[w+i], y[i]},
+                   {z[w+i],z[i]}, {carry1[i],carry0[i]});
       end
    endgenerate
 endmodule
@@ -268,17 +273,19 @@ endmodule
 
 module tb;
    parameter w = 32;
-   reg	     reset = 1;
-   
-   wire `chan k42;
-   wire	`chan k666;
-   wire	`chan c1, c2;
+   reg       reset = 1;
 
-   comp_const#(.w(32), .k(42)) ik42 (reset, k42);
-   comp_const#(.w(32), .k(666)) ik666 (reset, k666);
-   comp_add#(.w(32)) iadd(reset, k42, k666, c1);
-   comp_elem#(.w(32)) ielem(reset, c1, c2);
-   comp_sink#(.w(32), .id("c2"))  isink(reset, c2);
+   wire `chan k42;
+   wire `chan k666;
+   wire `chan c1, c2, c3;
+
+   comp_const#(.w(32), .k(42))          ik42(reset, k42);
+   comp_const#(.w(32), .k(666))         ik666 (reset, k666);
+   comp_add#(.w(32))                    i2(reset, k42, k666, c1);
+   comp_elem#(.w(32))                   i3(reset, c1, c2);
+   comp_elemV#(.w(32), .data(555))      i4(reset, c2, c3);
+   comp_sink#(.w(32), .id("c3"))        isink(reset, c3);
+
 
    initial begin
       $display("tb test starting");
@@ -309,7 +316,7 @@ module tb;
        $display(" >> %d + %d + %d = %d", a[1], b[1], c[1], {d[1],s[1]});
 
    always #10 x <= x + 1;
-   
+
    initial begin
       $display$("tokenflow test starting");
       $dumpfile("tokenflow.vcd");
