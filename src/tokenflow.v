@@ -61,7 +61,7 @@ module comp_sink#(parameter w = 32,
                   parameter id = "??")
    (input reset, inout wire `chan channel);
 
-   wire [w-1:0] merged = channel`data0 | channel`data1;
+   wire [w-1:0] merged = channel`data_neg | channel`data_pos;
 
 
    cgate cg(reset, |merged, &merged, channel`ack);
@@ -69,7 +69,7 @@ module comp_sink#(parameter w = 32,
 `ifdef SIM
    always @(posedge channel`ack)
      if (!reset)
-       $display("%05d  %-6s: Sunk %1d (ACK %d)", $time, id, channel`data1, channel`ack);
+       $display("%05d  %-6s: Sunk %1d", $time, id, channel`data_pos);
 `endif
 endmodule
 
@@ -78,7 +78,7 @@ module comp_spy#(parameter id = "??",
    (inout `chan x);
 
    reg `chan prev = 0;
-   wire complete = &(x`data0 | x`data1);
+   wire complete = &(x`data_neg | x`data_pos);
    wire [1:0] ctl = {complete, x`ack};
 
    always @* if (x != prev) begin
@@ -87,7 +87,46 @@ module comp_spy#(parameter id = "??",
               ctl == 2 ? "R " :
               ctl == 3 ? "RA" :
               /*     == 1*/ " A",
-              x`data1);
+              x`data_pos);
+      prev = x;
+   end
+endmodule
+
+module comp_spy3#(parameter id = "??",
+                 parameter w = 32)
+   (inout `chan x);
+
+   reg `chan prev = 0;
+   wire complete = &(x`data_neg | x`data_pos);
+   wire [1:0] ctl = {complete, x`ack};
+
+   always @* if (x != prev) begin
+     $display("%05d  %-6s: %s %1d", $time, id,
+              ctl == 0 ? "  " :
+              ctl == 2 ? "R " :
+              ctl == 3 ? "RA" :
+              /*     == 1*/ " A",
+              x`data >> w,
+              x`data1 >> w,
+              x`data2 >> w);
+      prev = x;
+   end
+endmodule
+
+module comp_spy0#(parameter id = "??")
+   (inout `ctl x);
+
+   wire dummy = 0;
+
+//   check#(id, 1) chk({dummy, x}); // Verilog doesn't handle empty ranges
+
+   reg `ctl prev = 0;
+   always @* if (x != prev) begin
+     $display("%05d  %-6s: %s", $time, id,
+              x == 0 ? "  " :
+              x == 2 ? "R " :
+              x == 3 ? "RA" :
+              /*== 1*/ " A");
       prev = x;
    end
 endmodule
@@ -111,7 +150,7 @@ module comp_elem#(parameter w = 1)
       for (i = 0; i < 2*w; i = i + 1)
          cgate inst(reset, x[i+1], !y`ack, y[i+1]);
    endgenerate
-   cgate cg(reset, |(y`data0 | y`data1), &(y`data0 | y`data1), x`ack);
+   cgate cg(reset, |(y`data_neg | y`data_pos), &(y`data_neg | y`data_pos), x`ack);
 endmodule
 
 module comp_elemV#(parameter w = 1,
@@ -140,17 +179,17 @@ module comp_elemV#(parameter w = 1,
          assign y[w+i+1] = k[i] ^ tt;
       end
    endgenerate
-   cgate cg(reset, |(y`data0 | y`data1), &(y`data0 | y`data1), x`ack);
+   cgate cg(reset, |(y`data_neg | y`data_pos), &(y`data_neg | y`data_pos), x`ack);
 endmodule
 
 module comp_fork#(parameter w = 32)
    (input reset,
     inout `chan x,
     inout `chan y, inout `chan z);
-   assign y`data0 = x`data0;
-   assign z`data0 = x`data0;
-   assign y`data1 = x`data1;
-   assign z`data1 = x`data1;
+   assign y`data_neg = x`data_neg;
+   assign y`data_pos = x`data_pos;
+   assign z`data_neg = x`data_neg;
+   assign z`data_pos = x`data_pos;
    cgate cg(reset, y`ack, z`ack, x`ack);
 endmodule
 
@@ -160,9 +199,18 @@ module comp_join#(parameter w = 32, parameter wy = 32)
     inout [4*w:0] z);
    assign x`ack = z`ack;
    assign y`ack = z`ack;
-   assign z`data0 = x`data0;
-   assign z`data1 = x`data1;
-   assign z[4*w:2*w+1] = {x`data0, x`data0};
+   assign z`data = x`data;
+   assign z[4*w:2*w+1] = y`data;
+endmodule
+
+module comp_join0#(parameter w = 32, parameter wy = 32)
+   (input reset,
+    inout `chan x, inout `ctl ctl,
+    inout [4*w:0] z);
+   assign x`ack = z`ack;
+   assign y`ack = z`ack;
+   assign z`data = x`data;
+   assign z[4*w:2*w+1] = y`data;
 endmodule
 
 module comp_merge#(parameter w = 32)
@@ -175,8 +223,8 @@ module comp_merge#(parameter w = 32)
       for (i = 0; i < 2*w; i = i + 1)
         cgate inst(reset, x[i+1], y[i+1], z[i+1]);
    endgenerate
-   cgate cgy(reset, |(y`data0 | y`data1), &(y`data0 | y`data1), y`ack);
-   cgate cgx(reset, |(x`data0 | x`data1), &(x`data0 | x`data1), x`ack);
+   cgate cgy(reset, |(y`data_neg | y`data_pos), &(y`data_neg | y`data_pos), y`ack);
+   cgate cgx(reset, |(x`data_neg | x`data_pos), &(x`data_neg | x`data_pos), x`ack);
 endmodule
 
 module comp_mux#(parameter w = 32)
@@ -189,13 +237,13 @@ module comp_mux#(parameter w = 32)
    genvar i;
    generate
       for (i = 0; i < 2*w; i = i + 1) begin
-         cgate instx(reset, ctl[2] /* ctl.f */, x[i+1], gatedx[i+1]);
-         cgate insty(reset, ctl[1] /* ctl.t */, y[i+1], gatedy[i+1]);
+         cgate instx(reset, ctl[1] /* ctl.f */, x[i+1], gatedx[i+1]);
+         cgate insty(reset, ctl[2] /* ctl.t */, y[i+1], gatedy[i+1]);
          assign z[i] = gatedx[i] | gatedy[i];
       end
    endgenerate
-   cgate cgy(reset, |(y`data0 | y`data1), &(y`data0 | y`data1), y`ack);
-   cgate cgx(reset, |(x`data0 | x`data1), &(x`data0 | x`data1), x`ack);
+   cgate cgy(reset, |(y`data_neg | y`data_pos), &(y`data_neg | y`data_pos), y`ack);
+   cgate cgx(reset, |(x`data_neg | x`data_pos), &(x`data_neg | x`data_pos), x`ack);
 endmodule
 
 module comp_demux#(parameter w = 32)
@@ -209,8 +257,8 @@ module comp_demux#(parameter w = 32)
    genvar i;
    generate
       for (i = 0; i < 2*w; i = i + 1) begin
-         cgate insty(reset, ctl[2] /* ctl.f */, x[i+1], y[i+1]);
-         cgate instz(reset, ctl[1] /* ctl.t */, x[i+1], z[i+1]);
+         cgate insty(reset, ctl[1] /* ctl.f */, x[i+1], y[i+1]);
+         cgate instz(reset, ctl[2] /* ctl.t */, x[i+1], z[i+1]);
       end
    endgenerate
 endmodule
@@ -270,6 +318,35 @@ module comp_add#(parameter w = 32)
    endgenerate
 endmodule
 
+module comp_add1#(parameter w = 32)
+   (input _reset,
+    inout `chan x,
+    inout `chan z);
+
+   // This will look like a join + computation
+   assign x`ack = z`ack;
+
+   wire [w:0] carry0, carry1;
+   assign carry0[0] = !z`ack; // No carry-in
+   assign carry1[0] = 1'd 0;
+
+   wire [1:0] zero = {!z`ack, 1'd0};
+   wire [1:0] one = {1'd0, !z`ack};
+
+   ncl_fa fa0(zero, {x[w],x[0]}, one,
+	      {z[w],z[0]}, {carry1[1],carry0[1]});
+
+   /* XXX This is VERY unoptimized at this point */
+   genvar i;
+   generate
+      for (i = 2; i < w+1; i = i + 1) begin
+         ncl_fa fa({carry1[i-1],carry0[i-1]}, {x[w+i],x[i]}, zero,
+                   {z[w+i],z[i]}, {carry1[i],carry0[i]});
+      end
+   endgenerate
+endmodule
+
+`ifdef testing_loop
 module tb;
    parameter w = 32;
    reg       reset = 1;
@@ -296,6 +373,7 @@ module tb;
       #1000 $finish;
    end
 endmodule
+`endif
 
 `ifdef testing_ncl_fa
 module tb;
@@ -328,8 +406,6 @@ module tb;
 endmodule
 `endif
 
-`ifdef some_future
-
 module tokenflow#(parameter w = 16)
    (input reset, inout wire `chan ou_ch);
 
@@ -356,20 +432,18 @@ module tokenflow#(parameter w = 16)
 
    comp_add1 #(w)               ii0(reset, ci0, ci1);
    comp_elem #(w)               ii1(reset, ci1, ci2);
-   comp_elem #(.w(w), .data(0)) ii2(reset, ci2, ci3);
-   comp_elemV #(.w(w))          ii3(reset, ci3, ci4);
+   comp_elem #(.w(w))           ii2(reset, ci2, ci3);
+   comp_elemV #(.w(w), .data(0))ii3(reset, ci3, ci4);
    comp_fork #(w)               ii4(reset, ci4, ci0, counter_ch);
 
    // Replicate c to (c,c,c)
    assign in_ch`data = counter_ch`data;
    assign in_ch`data1 = counter_ch`data;
    assign in_ch`data2 = counter_ch`data;
-   assign in_ch`req = counter_ch`req;
    assign counter_ch`ack = in_ch`ack;
 
    // Truncate the (a,b,c) triple data down to just c
    assign ou_ch`data = ou_ch3`data;
-   assign ou_ch`req = ou_ch3`req;
    assign ou_ch3`ack = ou_ch`ack;
 
    /*
@@ -424,7 +498,7 @@ module tokenflow#(parameter w = 16)
 
    wire `chan3 c1, c2, c3, c5, c54, c55, c6, c7, c8, c9;
 
-   wire [3*w+2:0] tc4; // Bundled control + data
+   wire [2*(w+1):0] tc4; // Bundled predicate+data
    wire `ctl c10ctl, c11ctl, c12ctl;
 
 `ifdef SIM
@@ -434,7 +508,7 @@ module tokenflow#(parameter w = 16)
    comp_spy3 #("c1", w)  s1(c1);
    comp_spy3 #("c2", w)  s2(c2);
    comp_spy3 #("c3", w)  s3(c3);
-   comp_spy  #("c4", 3*w+1) s4(tc4);
+   comp_spy  #("c4", w+1) s4(tc4);
    comp_spy3 #("c5", w)  s5(c5);
    comp_spy3 #("c6", w)  s6(c6);
    comp_spy3 #("c7", w)  s7(c7);
@@ -449,17 +523,16 @@ module tokenflow#(parameter w = 16)
    comp_join0 #(.w(3*w))                i1(reset, in_ch, c12ctl, c1);
 
    comp_merge #(.w(3*w))                i2(reset, c8, c1, c2);
-   comp_elem  #(.w(3*w), .delay(3))     i3(reset, c2, c3);
+   comp_elem  #(.w(3*w))                i3(reset, c2, c3);
    loop_cond  #(.w(w))                  i4(reset, c3, tc4);
    comp_bdemux#(.w(3*w))                i5(reset, tc4, c9, c5);
-   comp_elem  #(.w(3*w), .delay(2*w))   i6(reset, c5, c6);
+   comp_elem  #(.w(3*w))                i6(reset, c5, c6);
    mulstep    #(.w(w))                  i7(reset, c6, c7);
-   comp_elem  #(.w(3*w), .delay(2*w))   i8(reset, c7, c54);
+   comp_elem  #(.w(3*w))                i8(reset, c7, c54);
    mulstep    #(.w(w))                  i77(reset, c54, c55);
-   comp_elem  #(.w(3*w), .delay(3))     i78(reset, c55, c8);
+   comp_elem  #(.w(3*w))                i78(reset, c55, c8);
 
    comp_fork0 #(.w(3*w))                i9(reset, c9, ou_ch3, c10ctl);
    comp_elem0                           i10(reset, c10ctl, c11ctl);
    comp_elemV0                          i11(reset, c11ctl, c12ctl);
 endmodule
-`endif
