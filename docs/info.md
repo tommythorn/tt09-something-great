@@ -9,12 +9,17 @@ You can also include images in this folder and reference them in the markdown. E
 
 ## How it works
 
-Explain how your project works
+A RISC-V ALU with inputs sub:1 ashr:1 funct3:3 w:1 op1:64 op2:64 and
+outputs result:64 eq:1 lt:1 ltu:1 are connected with long shift
+registers such that operands can be shifted in on `tdi` on every
+positive clock edge.  On the cycle *after* the last data input bit,
+asserting `sample` for one cycle and on the subsequent cycles the
+result and the three condition codes will be shifted out on `tdo`.
 
 ## How to test
 
-Explain how to use your project
+Here will be a little python script to exercise the design.
 
 ## External hardware
 
-List external hardware used in your project (e.g. PMOD, LED display, etc), if any
+Nothing more than the bringup board
